@@ -4,9 +4,15 @@ version = "0.1.0"
 authors = ["flauntingspade4 <48335751+flauntingspade4@users.noreply.github.com>"]
 edition = "2018"
 
-[lib]
-name = "rust"
-crate-type = ["cdylib"]
+[profile.release]
+lto = 'thin'
+panic = 'abort'
+codegen-units = 1
+
+#[lib]
+#name = "rust"
+#crate-type = ["cdylib"]
 
 [dependencies]
-rand = "0.8.2"
+plotters = "^0.3.0"
+csv = "^1.1.5"
