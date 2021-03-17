@@ -3,7 +3,7 @@
 
 use std::{
     fs::File,
-    io::{BufRead, BufReader, BufWriter, Seek, Write},
+    io::{BufRead, BufReader, BufWriter, Read, Seek, Write},
     process::{ChildStdin, Command, Stdio},
     time::Instant,
 };
@@ -14,20 +14,19 @@ use bmp::BmpEncoder;
 
 const WIDTH: usize = 3000;
 const HEIGHT: usize = 1080;
+const BYTES_PER_PIXEL: usize = 3;
 
 const OUTPUT_FILE: &str = "../output/output.avi";
 const DEFAULT_INPUT_FILE: &str = "../input/input.csv";
 
-static mut PIXEL_ARRAY: &mut [u8] = &mut [255; WIDTH * HEIGHT * 3];
-
-use csv::Reader;
+static mut PIXEL_ARRAY: &mut [u8] = &mut [255; WIDTH * HEIGHT * BYTES_PER_PIXEL];
 
 use plotters::{
     prelude::{BitMapBackend, ChartBuilder, Circle, IntoDrawingArea},
     style::{Color, RED},
 };
 
-fn start(mut rdr: Reader<File>, mut writer: impl Write) {
+fn start(rdr: impl Read, mut writer: impl Write) {
     let start = Instant::now();
 
     if std::fs::remove_file(OUTPUT_FILE).is_ok() {
@@ -39,55 +38,61 @@ fn start(mut rdr: Reader<File>, mut writer: impl Write) {
 
     println!("Took {}ms to get to here", start.elapsed().as_millis());
 
-    for points in rdr.records().take(500) {
+    let rdr = BufReader::new(rdr);
+
+    for points in rdr.lines().skip(1) {
         let points = points.unwrap();
+        let points = points.split(',');
 
-        // SAFETY: As the application is exclusively single-threaded,
-        // the static mut will only be accessed by one thread at once
-        unsafe {
-            {
-                let start_draw = Instant::now();
+        {
+            let start_draw = Instant::now();
 
-                let window =
-                    BitMapBackend::with_buffer(&mut PIXEL_ARRAY, (WIDTH as u32, HEIGHT as u32))
-                        .into_drawing_area();
+            let window = unsafe {
+                BitMapBackend::with_buffer(&mut PIXEL_ARRAY, (WIDTH as u32, HEIGHT as u32))
+                    .into_drawing_area()
+            };
 
-                // Split the window into the correct amount of drawing areas
-                let windows = window.split_evenly((3, 10));
+            // Split the window into the correct amount of drawing areas
+            let windows = window.split_evenly((3, 10));
 
-                // Draw all the circles on their respective windows
-                for (point, window) in points.iter().skip(1).zip(windows.iter()) {
-                    let mut chart = ChartBuilder::on(window)
-                        //.margin(10)
-                        .y_label_area_size(50)
-                        .x_label_area_size(25)
-                        .build_cartesian_2d(-1.0..1.0, -15.0..15.0)
-                        .unwrap();
+            // Draw all the circles on their respective windows
+            for (point, window) in points.skip(1).zip(windows.iter()) {
+                let mut chart = ChartBuilder::on(window)
+                    //.margin(10)
+                    .y_label_area_size(50)
+                    .x_label_area_size(25)
+                    .build_cartesian_2d(-1.0..1.0, -15.0..15.0)
+                    .unwrap();
 
-                    chart
-                        .configure_mesh()
-                        .disable_mesh()
-                        .y_labels(15)
-                        .draw()
-                        .unwrap();
+                chart
+                    .configure_mesh()
+                    .disable_mesh()
+                    .y_labels(15)
+                    .draw()
+                    .unwrap();
 
-                    let point = point.parse::<f64>().unwrap();
-                    let circle = Circle::new((0., point), 5, RED.filled());
-                    chart.plotting_area().draw(&circle).unwrap();
-                }
-                draw_time += start_draw.elapsed().as_millis();
+                let point = match point.trim().parse::<f64>() {
+                    Ok(t) => t,
+                    Err(e) => panic!("Error {} whilst parsing {}", e, point),
+                };
+
+                let circle = Circle::new((0., point), 5, RED.filled());
+                chart.plotting_area().draw(&circle).unwrap();
             }
-
-            let start_enc = Instant::now();
-
-            let mut encoder = BmpEncoder::new(PIXEL_ARRAY);
-
-            encoder.write_all(&mut writer).unwrap();
-
-            PIXEL_ARRAY.iter_mut().for_each(|a| *a = 255);
-
-            enc_time += start_enc.elapsed().as_millis();
+            draw_time += start_draw.elapsed().as_millis();
         }
+
+        let start_enc = Instant::now();
+
+        let mut encoder = unsafe { BmpEncoder::new(&PIXEL_ARRAY) };
+
+        encoder.write_all(&mut writer).unwrap();
+
+        unsafe {
+            PIXEL_ARRAY.iter_mut().for_each(|a| *a = 255);
+        }
+
+        enc_time += start_enc.elapsed().as_millis();
     }
 
     let elapsed = start.elapsed().as_millis();
@@ -101,17 +106,14 @@ fn start(mut rdr: Reader<File>, mut writer: impl Write) {
 pub fn main() {
     let mut args = std::env::args().skip(1);
 
-    let mut file =
+    let mut rdr =
         std::fs::File::open(args.next().as_deref().unwrap_or(DEFAULT_INPUT_FILE)).unwrap();
 
     // Get the desired fps to view the video as if it were real-time
-    let fps = get_frame_rate(&file);
+    let fps = get_frame_rate(&rdr);
 
-    // Reset the reading for the file, so the csv parsing is correct
-    file.seek(std::io::SeekFrom::Start(0)).unwrap();
-
-    // rdr is the excel file we're reading from
-    let rdr = csv::Reader::from_reader(file);
+    // Reset the reading for the rdr, so the csv parsing is correct
+    rdr.seek(std::io::SeekFrom::Start(0)).unwrap();
 
     // writer is the stdin we're writing to, for ffmpeg
     let writer = ffmpeg_stuff(fps / 10);
