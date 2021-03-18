@@ -4,6 +4,18 @@ use crate::{HEIGHT, WIDTH};
 
 // A simple bmp encoder, should not be used by anything but this project
 
+const COLOUR_COUNT: usize = 8;
+
+const BITS_PER_PIXEL: u16 = 8;
+
+const REAL_BYTES_PER_PIXEL: usize = 1;
+
+// Blue, green. red, 0
+const COLOUR_TABLE: [u8; COLOUR_COUNT * 4] = [
+    255, 255, 255, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0,
+];
+
 pub struct BmpEncoder<'a> {
     file_header: [u8; 14],
     dib_header: BmpHeader,
@@ -12,10 +24,14 @@ pub struct BmpEncoder<'a> {
 
 impl<'a> BmpEncoder<'a> {
     pub const fn new(pixel_array: &'a [u8]) -> Self {
-        let byte_offset = core::mem::size_of::<BmpHeader>() as u32 + 14;
+        let byte_offset: u32 =
+            core::mem::size_of::<BmpHeader>() as u32 + 14 + COLOUR_COUNT as u32 * 4;
 
-        let file_size = ((WIDTH * HEIGHT * 3) as u32 + byte_offset).to_le_bytes();
+        let file_size: [u8; 4] =
+            ((WIDTH * HEIGHT * REAL_BYTES_PER_PIXEL) as u32 + byte_offset).to_le_bytes();
+
         let byte_offset: [u8; 4] = byte_offset.to_le_bytes();
+
         let file_header = [
             b'B',
             b'M',
@@ -40,12 +56,20 @@ impl<'a> BmpEncoder<'a> {
         }
     }
     pub fn write_all(&mut self, writer: &mut impl Write) -> Result<()> {
-        //let start = std::time::Instant::now();
         writer.write_all(&self.file_header)?;
         self.dib_header.write_all(writer)?;
-        writer.write_all(self.pixel_array)?;
+        writer.write_all(&COLOUR_TABLE)?;
 
-        //println!("Taken {}ms to write_all", start.elapsed().as_millis());
+        for item in self
+            .pixel_array
+            .chunks(3)
+            .map(|c| if c == &[255, 255, 255] { 0 } else { 1 })
+        {
+            writer.write(&[item])?;
+        }
+
+        //writer.write_all(self.pixel_array)?;
+
         Ok(())
     }
 }
@@ -82,12 +106,12 @@ impl BmpHeader {
             bi_width: WIDTH as u32,
             bi_height: -(HEIGHT as i32),
             bi_planes: 1,
-            bi_bit_count: 24,
+            bi_bit_count: BITS_PER_PIXEL,
             bi_compression: 0,
-            bi_size_image: (WIDTH * HEIGHT * 3) as u32,
+            bi_size_image: (WIDTH * HEIGHT * REAL_BYTES_PER_PIXEL) as u32,
             bi_x_pels_per_meter: 0,
             bi_y_pels_per_meter: 0,
-            bi_clr_used: 0,
+            bi_clr_used: COLOUR_COUNT as u32,
             bi_clr_important: 0,
         }
     }
