@@ -14,12 +14,12 @@ use bmp::BmpEncoder;
 
 const WIDTH: usize = 3000;
 const HEIGHT: usize = 1080;
-const DRAW_BYTES_PER_PIXEL: usize = 3;
+const BYTES_PER_PIXEL: usize = 3;
 
 const OUTPUT_FILE: &str = "../output/output.avi";
 const DEFAULT_INPUT_FILE: &str = "../input/input.csv";
 
-static mut PIXEL_ARRAY: &mut [u8] = &mut [255; WIDTH * HEIGHT * DRAW_BYTES_PER_PIXEL];
+static mut PIXEL_ARRAY: &mut [u8] = &mut [255; WIDTH * HEIGHT * BYTES_PER_PIXEL];
 
 use plotters::{
     prelude::{BitMapBackend, ChartBuilder, Circle, IntoDrawingArea},
