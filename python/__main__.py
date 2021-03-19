@@ -47,7 +47,7 @@ def draw(data, filename):
 
     # Set axis label names
     # ---
-    
+
     disps = [disp06, disp09, disp10, disp13]
 
     redDots = []
@@ -58,24 +58,25 @@ def draw(data, filename):
     [redDot2] = ax02.plot(0, [disp09[0]], "ro")
 
     def animate(i):
-        #for dispi, redDot in enumerate(redDots):
+        # for dispi, redDot in enumerate(redDots):
         #    redDot.set_data(0, disps[dispi][i])
         redDot1.set_data(0, disp06[i])
         redDot2.set_data(0, disp09[i])
         return redDot1, redDot2
-        #return redDots
+        # return redDots
 
     simulation = animation.FuncAnimation(
-        figureName, animate, blit=True, frames=50, interval=20, repeat=False
+        figureName, animate, blit=True, frames=2048, interval=20, repeat=False
     )
-    simulation.save(filename=filename, fps=30, dpi=150)
+
+    simulation.save(filename=filename, fps=20, dpi=150)
 
 
 if __name__ == "__main__":
     import time
 
     start = time.perf_counter()
-    with open("input\Reformatted copy - 2014-06-12-17-27-42-gauges.csv") as f:
+    with open("input/input.csv") as f:
         data = pd.read_csv(f)
         draw(data, "output/sim.mp4")
     end = time.perf_counter()
