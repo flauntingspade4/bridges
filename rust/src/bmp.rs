@@ -1,6 +1,8 @@
 use std::io::{Result, Write};
 
-use crate::{HEIGHT, WIDTH};
+use core::mem::size_of;
+
+use crate::{BYTES_PER_PIXEL, HEIGHT, WIDTH};
 
 // A simple bmp encoder, should not be used by anything but this project
 
@@ -12,7 +14,7 @@ pub struct BmpEncoder<'a> {
 
 impl<'a> BmpEncoder<'a> {
     pub const fn new(pixel_array: &'a [u8]) -> Self {
-        let byte_offset = core::mem::size_of::<BmpHeader>() as u32 + 14;
+        let byte_offset = size_of::<BmpHeader>() as u32 + 14;
 
         let file_size = ((WIDTH * HEIGHT * 3) as u32 + byte_offset).to_le_bytes();
         let byte_offset: [u8; 4] = byte_offset.to_le_bytes();
@@ -32,20 +34,21 @@ impl<'a> BmpEncoder<'a> {
             byte_offset[2],
             byte_offset[3],
         ];
+
         let dib_header = BmpHeader::new();
+
         Self {
             file_header,
             dib_header,
             pixel_array,
         }
     }
+    /// Correctly writes self to the writer
     pub fn write_all(&mut self, writer: &mut impl Write) -> Result<()> {
-        //let start = std::time::Instant::now();
         writer.write_all(&self.file_header)?;
         self.dib_header.write_all(writer)?;
         writer.write_all(self.pixel_array)?;
 
-        //println!("Taken {}ms to write_all", start.elapsed().as_millis());
         Ok(())
     }
 }
@@ -82,15 +85,16 @@ impl BmpHeader {
             bi_width: WIDTH as u32,
             bi_height: -(HEIGHT as i32),
             bi_planes: 1,
-            bi_bit_count: 24,
+            bi_bit_count: (BYTES_PER_PIXEL * 8) as u16,
             bi_compression: 0,
-            bi_size_image: (WIDTH * HEIGHT * 3) as u32,
+            bi_size_image: (WIDTH * HEIGHT * BYTES_PER_PIXEL) as u32,
             bi_x_pels_per_meter: 0,
             bi_y_pels_per_meter: 0,
             bi_clr_used: 0,
             bi_clr_important: 0,
         }
     }
+    /// Correctly writes self to the writer
     fn write_all(&self, writer: &mut impl Write) -> Result<()> {
         writer.write_all(&self.bi_size.to_le_bytes())?;
         writer.write_all(&self.bi_width.to_le_bytes())?;
