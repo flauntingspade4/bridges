@@ -9,9 +9,9 @@ use std::{
 
 mod bmp;
 
-use bmp::BmpEncoder;
+use bmp::ENCODER;
 
-const WIDTH: usize = 3000;
+const WIDTH: usize = 1920;
 const HEIGHT: usize = 1080;
 const BYTES_PER_PIXEL: usize = 3;
 
@@ -27,17 +27,32 @@ use plotters::{
     style::{Color, RED},
 };
 
-fn start(rdr: BufReader<impl Read>, mut writer: BufWriter<impl Write>) {
-    let start = Instant::now();
+/// Sets up the chart-must be identical for both when the axis
+/// are being drawn initially, and when the points are being drawn.
+/// This is a macro instead of a function to avoid generics messing
+/// it up, were plotters to change-only breaking changes could affect
+/// this macro
+macro_rules! setup_chart {
+    ($chart:ident) => {{
+        $chart
+            .y_label_area_size(50)
+            .x_label_area_size(25)
+            .build_cartesian_2d(-0.1..0.1, -15.0..15.0)
+            .unwrap()
+    }};
+}
 
+/// Returns the amount of time it takes to encode, and to draw
+fn draw_image_to_writer(
+    rdr: BufReader<impl Read>,
+    mut writer: BufWriter<impl Write>,
+) -> (u128, u128) {
     if std::fs::remove_file(OUTPUT_FILE).is_ok() {
         println!("Removed \"{}\"", OUTPUT_FILE)
     }
 
     let mut enc_time = 0;
     let mut draw_time = 0;
-
-    println!("Took {}ms to get to here", start.elapsed().as_millis());
 
     for points in rdr.lines().skip(1) {
         let points = points.unwrap();
@@ -46,21 +61,20 @@ fn start(rdr: BufReader<impl Read>, mut writer: BufWriter<impl Write>) {
         {
             let start_draw = Instant::now();
 
-            let window = unsafe {
-                BitMapBackend::with_buffer(&mut PIXEL_ARRAY, (WIDTH as u32, HEIGHT as u32))
-                    .into_drawing_area()
-            };
+            let window = BitMapBackend::with_buffer(
+                unsafe { &mut PIXEL_ARRAY },
+                (WIDTH as u32, HEIGHT as u32),
+            )
+            .into_drawing_area();
 
             // Split the window into the correct amount of drawing areas
             let windows = window.split_evenly((3, 10));
 
-            // Draw all the circles on their respective windows
+            // Draw all sthe circles on their respective windows
             for (point, window) in points.skip(1).zip(windows.iter()) {
-                let chart = ChartBuilder::on(window)
-                    .y_label_area_size(50)
-                    .x_label_area_size(25)
-                    .build_cartesian_2d(-1.0..1.0, -15.0..15.0)
-                    .unwrap();
+                let mut chart = ChartBuilder::on(window);
+
+                let chart = setup_chart!(chart);
 
                 let point = match point.trim().parse::<f64>() {
                     Ok(t) => t,
@@ -75,16 +89,43 @@ fn start(rdr: BufReader<impl Read>, mut writer: BufWriter<impl Write>) {
 
         let start_enc = Instant::now();
 
-        let mut encoder = unsafe { BmpEncoder::new(&PIXEL_ARRAY) };
+        ENCODER
+            .write_all(&mut writer, unsafe { PIXEL_ARRAY })
+            .unwrap();
 
-        encoder.write_all(&mut writer).unwrap();
+        let start_draw_2 = Instant::now();
 
         unsafe {
             PIXEL_ARRAY.copy_from_slice(DRAWN_AXIS);
         }
 
+        draw_time += start_draw_2.elapsed().as_millis();
         enc_time += start_enc.elapsed().as_millis();
     }
+
+    (enc_time, draw_time)
+}
+
+#[no_mangle]
+pub extern "C" fn start() {
+    let start = Instant::now();
+
+    let mut args = std::env::args().skip(1);
+
+    let mut rdr = std::fs::File::open(args.next().as_deref().unwrap_or(DEFAULT_INPUT_FILE))
+        .expect("The input and default path don't yield a file");
+
+    let fps = setup(&rdr);
+
+    // Reset the reading for the rdr, so the csv parsing is correct
+    rdr.seek(std::io::SeekFrom::Start(0)).unwrap();
+
+    // writer is the stdin we're writing to, for ffmpeg
+    let writer = setup_ffmpeg(fps / 10);
+
+    println!("Took {}ms to get to here", start.elapsed().as_millis());
+
+    let (enc_time, draw_time) = draw_image_to_writer(BufReader::new(rdr), BufWriter::new(writer));
 
     let elapsed = start.elapsed().as_millis();
 
@@ -94,25 +135,14 @@ fn start(rdr: BufReader<impl Read>, mut writer: BufWriter<impl Write>) {
     );
 }
 
-pub fn main() {
-    let mut args = std::env::args().skip(1);
-
-    let mut rdr =
-        std::fs::File::open(args.next().as_deref().unwrap_or(DEFAULT_INPUT_FILE)).unwrap();
-
-    let fps = setup(&rdr);
-
-    // Reset the reading for the rdr, so the csv parsing is correct
-    rdr.seek(std::io::SeekFrom::Start(0)).unwrap();
-
-    // writer is the stdin we're writing to, for ffmpeg
-    let writer = ffmpeg_stuff(fps / 10);
-
-    start(BufReader::new(rdr), BufWriter::new(writer));
+fn main() {
+    start();
 }
 
-fn ffmpeg_stuff(fps: usize) -> ChildStdin {
-    let mut ffmpeg = Command::new("ffmpeg")
+/// Setup the ffmpeg writer with the specified fps, returning the
+/// `ChildStdin` of the thread started
+fn setup_ffmpeg(fps: usize) -> ChildStdin {
+    let ffmpeg = Command::new("ffmpeg")
         .args(&[
             "-framerate",
             &format!("{}", fps),
@@ -126,36 +156,35 @@ fn ffmpeg_stuff(fps: usize) -> ChildStdin {
         .spawn()
         .expect("failed to execute process");
 
-    ffmpeg.stdin.take().unwrap()
+    match ffmpeg.stdin {
+        Some(t) => t,
+        None => unreachable!(),
+    }
 }
 
-/// Returns the fps that the file would run at, and sets DRAWN_AXIS
+/// Returns the fps that the file would run at, and sets `DRAWN_AXIS`
 fn setup(rdr: &File) -> usize {
     let mut fps = 0;
 
-    {
-        let window = unsafe {
-            BitMapBackend::with_buffer(&mut PIXEL_ARRAY, (WIDTH as u32, HEIGHT as u32))
-                .into_drawing_area()
-        };
+    let window =
+        BitMapBackend::with_buffer(unsafe { &mut PIXEL_ARRAY }, (WIDTH as u32, HEIGHT as u32))
+            .into_drawing_area();
 
-        let windows = window.split_evenly((3, 10));
+    let windows = window.split_evenly((3, 10));
 
-        for window in windows.iter() {
-            let mut chart = ChartBuilder::on(window)
-                .y_label_area_size(50)
-                .x_label_area_size(25)
-                .build_cartesian_2d(-1.0..1.0, -15.0..15.0)
-                .unwrap();
+    for window in &windows {
+        let mut chart = ChartBuilder::on(window);
 
-            chart
-                .configure_mesh()
-                .disable_mesh()
-                .y_labels(15)
-                .draw()
-                .unwrap();
-        }
+        let mut chart = setup_chart!(chart);
+
+        chart
+            .configure_mesh()
+            .x_labels(1)
+            .y_labels(15)
+            .draw()
+            .unwrap();
     }
+
     // At this point PIXEL_ARRAY contains the default axis,
     // so we must set DRAWN_AXIS to a clone of this.
     // SAFETY: DRAWN_AXIS is only borrowed mutably once, here,
@@ -167,14 +196,17 @@ fn setup(rdr: &File) -> usize {
     let rdr = BufReader::new(rdr);
 
     for line in rdr.lines().skip(1) {
-        let line = line.unwrap();
+        let line = line.expect("The input file should contain only vaild UTF-8");
 
-        let time = line
+        let time = match line
             .split(',')
             .next()
             .expect("Time must be the first paramater")
             .parse::<f64>()
-            .unwrap();
+        {
+            Ok(t) => t,
+            Err(e) => panic!("Error {} whilst parsing {}", e, line),
+        };
 
         if time >= 1.0 {
             break;

@@ -6,18 +6,19 @@ use crate::{BYTES_PER_PIXEL, HEIGHT, WIDTH};
 
 // A simple bmp encoder, should not be used by anything but this project
 
-pub struct BmpEncoder<'a> {
+static DIBHEADER: BmpHeader = BmpHeader::new();
+pub static ENCODER: BmpEncoder = BmpEncoder::new();
+
+pub struct BmpEncoder {
     file_header: [u8; 14],
-    dib_header: BmpHeader,
-    pixel_array: &'a [u8],
 }
 
-impl<'a> BmpEncoder<'a> {
-    pub const fn new(pixel_array: &'a [u8]) -> Self {
+impl BmpEncoder {
+    pub const fn new() -> Self {
         let byte_offset = size_of::<BmpHeader>() as u32 + 14;
 
         let file_size = ((WIDTH * HEIGHT * 3) as u32 + byte_offset).to_le_bytes();
-        let byte_offset: [u8; 4] = byte_offset.to_le_bytes();
+        let byte_offset = byte_offset.to_le_bytes();
         let file_header = [
             b'B',
             b'M',
@@ -35,19 +36,13 @@ impl<'a> BmpEncoder<'a> {
             byte_offset[3],
         ];
 
-        let dib_header = BmpHeader::new();
-
-        Self {
-            file_header,
-            dib_header,
-            pixel_array,
-        }
+        Self { file_header }
     }
-    /// Correctly writes self to the writer
-    pub fn write_all(&mut self, writer: &mut impl Write) -> Result<()> {
+    /// Correctly writes a bmp image `pixel_array` to `writer`
+    pub fn write_all(&self, writer: &mut impl Write, pixel_array: &[u8]) -> Result<()> {
         writer.write_all(&self.file_header)?;
-        self.dib_header.write_all(writer)?;
-        writer.write_all(self.pixel_array)?;
+        DIBHEADER.write_all(writer)?;
+        writer.write_all(pixel_array)?;
 
         Ok(())
     }
