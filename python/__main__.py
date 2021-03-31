@@ -78,6 +78,6 @@ if __name__ == "__main__":
     start = time.perf_counter()
     with open("input/input.csv") as f:
         data = pd.read_csv(f)
-        draw(data, "output/sim.mp4")
+        draw(data, "output/sim.avi")
     end = time.perf_counter()
     print(end - start)
